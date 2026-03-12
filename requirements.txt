@@ -1,6 +1,8 @@
-matplotlib
-pandas
-geopandas
-streamlit
 altair>=5.0.0
 streamlit>=1.31.0
+streamlit
+pandas
+geopandas
+folium
+streamlit-folium
+matplotlib

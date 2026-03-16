@@ -102,13 +102,45 @@ if uploaded_file is not None:
     if 'E' in df.columns and 'N' in df.columns and 'STN' in df.columns:
         coords = list(zip(df['E'], df['N']))
         poly_geom = Polygon(coords)
-        
-        gdf_poly = gpd.GeoDataFrame({'Lot': [no_lot], 'Luas': [poly_geom.area]}, geometry=[poly_geom], crs="EPSG:4390")
-        points_geom = [Point(x, y) for x, y in coords]
-        gdf_points = gpd.GeoDataFrame(df, geometry=points_geom, crs="EPSG:4390")
-        
-        centroid = poly_geom.centroid
         luas = poly_geom.area
+        centroid = poly_geom.centroid
+        
+        # --- PERSEDIAAN DATA ATRIBUT ---
+        bearing_list = []
+        jarak_list = []
+        stn_list = []
+        ke_stn_list = []
+        
+        for i in range(len(df)):
+            p1 = df.iloc[i]
+            p2 = df.iloc[(i + 1) % len(df)]
+            dist = np.sqrt((p2['E'] - p1['E'])**2 + (p2['N'] - p1['N'])**2)
+            angle_deg = np.degrees(np.arctan2(p2['E'] - p1['E'], p2['N'] - p1['N'])) % 360
+            
+            stn_list.append(str(int(p1['STN'])))
+            ke_stn_list.append(str(int(p2['STN'])))
+            bearing_list.append(dd_to_dms(angle_deg))
+            jarak_list.append(round(dist, 3))
+
+        # Dataframe Poligon dengan atribut lengkap
+        gdf_poly = gpd.GeoDataFrame({
+            'Nombor_Lot': [no_lot], 
+            'Luas_m2': [round(luas, 3)],
+            'Perimeter': [round(sum(jarak_list), 3)],
+            'Senarai_STN': [", ".join(stn_list)]
+        }, geometry=[poly_geom], crs="EPSG:4390")
+
+        # Dataframe Point dengan atribut Bearing & Jarak (ke stesen seterusnya)
+        gdf_points = gpd.GeoDataFrame({
+            'STN': df['STN'].astype(int),
+            'E': df['E'],
+            'N': df['N'],
+            'Ke_STN': ke_stn_list,
+            'Bearing': bearing_list,
+            'Jarak_m': jarak_list,
+            'Lot': no_lot
+        }, geometry=[Point(x, y) for x, y in coords], crs="EPSG:4390")
+        
         transformer = Transformer.from_crs("epsg:4390", "epsg:4326", always_xy=True)
 
         tab_pelan, tab_satelit, tab_jadual, tab_export = st.tabs([
@@ -126,11 +158,9 @@ if uploaded_file is not None:
             
             for i in range(len(df)):
                 p1, p2 = df.iloc[i], df.iloc[(i + 1) % len(df)]
-                dist = np.sqrt((p2['E'] - p1['E'])**2 + (p2['N'] - p1['N'])**2)
-                angle_deg = np.degrees(np.arctan2(p2['E'] - p1['E'], p2['N'] - p1['N'])) % 360
                 mid_e, mid_n = (p1['E'] + p2['E']) / 2, (p1['N'] + p2['N']) / 2
-                ax.text(mid_e, mid_n + 0.3, f"{dd_to_dms(angle_deg)}", fontsize=font_size-2, color='darkred', ha='center')
-                ax.text(mid_e, mid_n - 0.3, f"{dist:.3f}m", fontsize=font_size-2, color='darkblue', ha='center')
+                ax.text(mid_e, mid_n + 0.3, f"{bearing_list[i]}", fontsize=font_size-2, color='darkred', ha='center')
+                ax.text(mid_e, mid_n - 0.3, f"{jarak_list[i]}m", fontsize=font_size-2, color='darkblue', ha='center')
                 ax.text(p1['E'], p1['N']+0.5, f"{int(p1['STN'])}", fontsize=font_size, fontweight='bold')
             ax.set_aspect('equal')
             st.pyplot(fig)
@@ -142,12 +172,7 @@ if uploaded_file is not None:
             
             folium.TileLayer(
                 tiles='https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', 
-                attr='Google', 
-                name='Google Satellite', 
-                overlay=False, 
-                control=True,
-                max_zoom=22,
-                max_native_zoom=20
+                attr='Google', name='Google Satellite', overlay=False, control=True, max_zoom=22, max_native_zoom=20
             ).add_to(m)
 
             wgs_poly = [transformer.transform(x, y) for x, y in coords]
@@ -158,81 +183,82 @@ if uploaded_file is not None:
             ).add_to(m)
 
             for i in range(len(df)):
-                p1_row, p2_row = df.iloc[i], df.iloc[(i + 1) % len(df)]
-                dist = np.sqrt((p2_row['E'] - p1_row['E'])**2 + (p2_row['N'] - p1_row['N'])**2)
-                angle_deg = np.degrees(np.arctan2(p2_row['E'] - p1_row['E'], p2_row['N'] - p1_row['N'])) % 360
-                lon1, lat1 = transformer.transform(p1_row['E'], p1_row['N'])
-                lon2, lat2 = transformer.transform(p2_row['E'], p2_row['N'])
+                lon1, lat1 = transformer.transform(df.iloc[i]['E'], df.iloc[i]['N'])
+                lon2, lat2 = transformer.transform(df.iloc[(i+1)%len(df)]['E'], df.iloc[(i+1)%len(df)]['N'])
+                folium.PolyLine(locations=[[lat1, lon1], [lat2, lon2]], color=poly_color, weight=3, opacity=1).add_to(m)
                 
-                folium.PolyLine(
-                    locations=[[lat1, lon1], [lat2, lon2]], color=poly_color, weight=3, opacity=1
-                ).add_to(m)
-
                 mid_lat, mid_lon = (lat1 + lat2) / 2, (lon1 + lon2) / 2
                 label_html = f"""<div style="font-size: {font_size-2}px; color: white; text-shadow: 2px 2px 4px black; font-weight: bold; white-space: nowrap;">
-                                 {dd_to_dms(angle_deg)}<br>{dist:.3f}m</div>"""
-                
-                folium.Marker(
-                    [mid_lat, mid_lon],
-                    icon=folium.DivIcon(html=label_html)
-                ).add_to(m)
+                                 {bearing_list[i]}<br>{jarak_list[i]}m</div>"""
+                folium.Marker([mid_lat, mid_lon], icon=folium.DivIcon(html=label_html)).add_to(m)
 
+            # --- BAHAGIAN YANG DIKEMASKINI: POPUP TANDA SEMPADAN ---
             for i, row in df.iterrows():
                 lon, lat = transformer.transform(row['E'], row['N'])
-                popup_info = f"<b>STN {int(row['STN'])}</b><hr>E: {row['E']:.3f}<br>N: {row['N']:.3f}<br>Lat: {lat:.7f}<br>Lon: {lon:.7f}"
+                
+                # Bina kandungan popup dengan maklumat lengkap
+                info_popup = f"""
+                <div style="font-family: Arial; font-size: 12px; width: 180px;">
+                    <h4 style="margin:0; color: #007bff;">STESEN {int(row['STN'])}</h4>
+                    <hr style="margin: 5px 0;">
+                    <b>Easting:</b> {row['E']:.3f} m<br>
+                    <b>Northing:</b> {row['N']:.3f} m<br>
+                    <b>Latitude:</b> {lat:.7f}°<br>
+                    <b>Longitude:</b> {lon:.7f}°
+                </div>
+                """
+                
                 folium.CircleMarker(
-                    location=[lat, lon], radius=6, color="red", fill=True, fill_color="yellow", 
-                    fill_opacity=1, popup=folium.Popup(popup_info, max_width=200)
+                    location=[lat, lon], 
+                    radius=6, 
+                    color="red", 
+                    fill=True, 
+                    fill_color="yellow", 
+                    fill_opacity=1, 
+                    popup=folium.Popup(info_popup, max_width=300)
                 ).add_to(m)
 
             folium_static(m, width=1000)
 
-        # --- TAB 3: JADUAL (GABUNGAN KOORDINAT, UKURAN & LAT/LON) ---
+        # --- TAB 3: JADUAL ---
         with tab_jadual:
             st.subheader("📋 Jadual Koordinat, Ukuran & Geografi")
-            
             combined_data = []
             for i in range(len(df)):
                 p1 = df.iloc[i]
-                p2 = df.iloc[(i + 1) % len(df)]
-                
-                dist = np.sqrt((p2['E'] - p1['E'])**2 + (p2['N'] - p1['N'])**2)
-                angle_deg = np.degrees(np.arctan2(p2['E'] - p1['E'], p2['N'] - p1['N'])) % 360
-                
                 lon, lat = transformer.transform(p1['E'], p1['N'])
-                
                 combined_data.append({
                     "STN": int(p1['STN']),
                     "E (m)": f"{p1['E']:.3f}",
                     "N (m)": f"{p1['N']:.3f}",
                     "Latitude": f"{lat:.8f}",
                     "Longitude": f"{lon:.8f}",
-                    "Ke STN": int(p2['STN']),
-                    "Bearing": dd_to_dms(angle_deg),
-                    "Jarak (m)": f"{dist:.3f}"
+                    "Ke STN": ke_stn_list[i],
+                    "Bearing": bearing_list[i],
+                    "Jarak (m)": f"{jarak_list[i]:.3f}"
                 })
-            
             df_combined = pd.DataFrame(combined_data)
             st.dataframe(df_combined, use_container_width=True, hide_index=True)
-            
-            csv = df_combined.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Muat Turun Jadual Lengkap (CSV)",
-                data=csv,
-                file_name=f"Data_Lengkap_Lot_{no_lot}.csv",
-                mime='text/csv',
-            )
+            st.download_button(label="📥 Muat Turun Jadual Lengkap (CSV)", data=df_combined.to_csv(index=False).encode('utf-8'), file_name=f"Data_Lengkap_Lot_{no_lot}.csv", mime='text/csv')
 
         # --- TAB 4: EXPORT ---
         with tab_export:
             st.subheader("📤 Eksport Data untuk QGIS")
+            st.write("Semua data **Bearing** dan **Jarak** telah dimasukkan ke dalam Attribute Table fail di bawah.")
+            
             col_exp1, col_exp2 = st.columns(2)
+            gdf_poly_exp = gdf_poly.to_crs(epsg=4326)
+            gdf_points_exp = gdf_points.to_crs(epsg=4326)
+
             with col_exp1:
-                st.download_button("💾 Muat Turun Poligon.geojson", data=gdf_poly.to_crs(epsg=4326).to_json(), 
-                                   file_name=f"Lot_{no_lot}.geojson", mime="application/json")
+                st.info("📦 **Layer Poligon**")
+                st.download_button(label="💾 Muat Turun Poligon.geojson", data=gdf_poly_exp.to_json(), file_name=f"Lot_{no_lot}_Sempadan.geojson", mime="application/json")
             with col_exp2:
-                st.download_button("📍 Muat Turun Points.geojson", data=gdf_points.to_crs(epsg=4326).to_json(), 
-                                   file_name=f"Lot_{no_lot}_Points.geojson", mime="application/json")
+                st.info("📍 **Layer Stesen**")
+                st.download_button(label="📍 Muat Turun Points.geojson", data=gdf_points_exp.to_json(), file_name=f"Lot_{no_lot}_Titik.geojson", mime="application/json")
+            
+            st.success("✅ **Nota QGIS:** Sila semak 'Attribute Table' pada layer di QGIS untuk melihat Bearing dan Jarak.")
+
     else:
         st.error("Ralat: Pastikan fail CSV mempunyai kolum STN, E, dan N!")
 else:

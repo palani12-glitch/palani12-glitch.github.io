@@ -1,8 +1,9 @@
-altair>=5.0.0
-streamlit>=1.31.0
 streamlit
 pandas
+matplotlib
 geopandas
+shapely
+numpy
 folium
 streamlit-folium
-matplotlib
+pyproj
